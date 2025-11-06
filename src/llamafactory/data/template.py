@@ -416,8 +416,8 @@ class ReasoningTemplate(Template):
 
         prompt_ids, response_ids = super().encode_oneturn(tokenizer, messages, system, tools)
         if (
-            self.thought_words[0].strip() not in messages[-1]["content"]
-            and self.thought_words[1].strip() not in messages[-1]["content"]
+            self.thought_words[0] not in messages[-1]["content"]
+            and self.thought_words[1] not in messages[-1]["content"]
         ):  # add empty cot
             if not self.enable_thinking:  # do not compute loss
                 prompt_ids += self.get_thought_word_ids(tokenizer)
@@ -442,8 +442,8 @@ class ReasoningTemplate(Template):
         encoded_messages = self._encode(tokenizer, messages, system, tools)
         for i in range(0, len(messages), 2):
             if (
-                self.thought_words[0].strip() not in messages[i + 1]["content"]
-                and self.thought_words[1].strip() not in messages[i + 1]["content"]
+                self.thought_words[0] not in messages[i + 1]["content"]
+                and self.thought_words[1] not in messages[i + 1]["content"]
             ):  # add empty cot
                 if not self.enable_thinking:  # do not compute loss
                     encoded_messages[i] += self.get_thought_word_ids(tokenizer)
@@ -616,14 +616,7 @@ def get_template_and_fix_tokenizer(tokenizer: "PreTrainedTokenizer", data_args: 
         logger.info_rank0(f"Using default system message: {data_args.default_system}.")
         template.default_system = data_args.default_system
 
-    if isinstance(template, ReasoningTemplate):
-        logger.warning_rank0(
-            "You are using reasoning template, "
-            "please add `_nothink` suffix if the model is not a reasoning model. "
-            "e.g., qwen3_vl_nothink"
-        )
-        template.enable_thinking = data_args.enable_thinking
-
+    template.enable_thinking = data_args.enable_thinking
     template.fix_special_tokens(tokenizer)
     template.fix_jinja_template(tokenizer)
     return template
@@ -929,8 +922,8 @@ register_template(
         name="qwen2_vl",
         image_token="<|imgpad|>",
         video_token="<|vidpad|>",
-        vision_bos_token="<|img|>",
-        vision_eos_token="<|endofimg|>",
+        start_token="<|img|>",
+        end_token="<|endofimg|>",
     ),
 )
 
@@ -1208,10 +1201,10 @@ register_template(
 
 register_template(
     name="hunyuan",
-    format_user=StringFormatter(slots=["{{content}}<|extra_0|>"]),
-    format_assistant=StringFormatter(slots=["{{content}}<|eos|>"]),
-    format_system=StringFormatter(slots=["{{content}}<|extra_4|>"]),
-    format_prefix=EmptyFormatter(slots=["<|startoftext|>"]),
+    format_user=StringFormatter(slots=["<|bos|>user\n{{content}}<|eos|>\n<|bos|>assistant\n"]),
+    format_assistant=StringFormatter(slots=["{{content}}<|eos|>\n"]),
+    format_system=StringFormatter(slots=["<|bos|>system\n{{content}}<|eos|>\n"]),
+    format_prefix=EmptyFormatter(slots=["<|bos|>"]),
     stop_words=["<|eos|>"],
 )
 
@@ -1869,54 +1862,9 @@ register_template(
     stop_words=["<|im_end|>"],
     replace_eos=True,
     mm_plugin=get_mm_plugin(
-        name="qwen2_omni",
-        image_token="<|IMAGE|>",
-        video_token="<|VIDEO|>",
-        audio_token="<|AUDIO|>",
-        vision_bos_token="<|vision_bos|>",
-        vision_eos_token="<|vision_eos|>",
-        audio_bos_token="<|audio_bos|>",
-        audio_eos_token="<|audio_eos|>",
+        name="qwen2_omni", audio_token="<|AUDIO|>", image_token="<|IMAGE|>", video_token="<|VIDEO|>"
     ),
 )
-
-
-register_template(
-    name="qwen3_omni",
-    format_user=StringFormatter(slots=["<|im_start|>user\n{{content}}<|im_end|>\n<|im_start|>assistant\n"]),
-    format_assistant=StringFormatter(slots=["{{content}}<|im_end|>\n"]),
-    format_system=StringFormatter(slots=["<|im_start|>system\n{{content}}<|im_end|>\n"]),
-    format_function=FunctionFormatter(slots=["{{content}}<|im_end|>\n"], tool_format="qwen"),
-    format_observation=StringFormatter(
-        slots=["<|im_start|>user\n<tool_response>\n{{content}}\n</tool_response><|im_end|>\n<|im_start|>assistant\n"]
-    ),
-    format_tools=ToolFormatter(tool_format="qwen"),
-    stop_words=["<|im_end|>"],
-    replace_eos=True,
-    mm_plugin=get_mm_plugin(
-        name="qwen2_omni", image_token="<|image_pad|>", video_token="<|video_pad|>", audio_token="<|audio_pad|>"
-    ),
-    template_class=ReasoningTemplate,
-)
-
-
-register_template(
-    name="qwen3_omni_nothink",
-    format_user=StringFormatter(slots=["<|im_start|>user\n{{content}}<|im_end|>\n<|im_start|>assistant\n"]),
-    format_assistant=StringFormatter(slots=["{{content}}<|im_end|>\n"]),
-    format_system=StringFormatter(slots=["<|im_start|>system\n{{content}}<|im_end|>\n"]),
-    format_function=FunctionFormatter(slots=["{{content}}<|im_end|>\n"], tool_format="qwen"),
-    format_observation=StringFormatter(
-        slots=["<|im_start|>user\n<tool_response>\n{{content}}\n</tool_response><|im_end|>\n<|im_start|>assistant\n"]
-    ),
-    format_tools=ToolFormatter(tool_format="qwen"),
-    stop_words=["<|im_end|>"],
-    replace_eos=True,
-    mm_plugin=get_mm_plugin(
-        name="qwen2_omni", image_token="<|image_pad|>", video_token="<|video_pad|>", audio_token="<|audio_pad|>"
-    ),
-)
-
 
 # copied from qwen template
 register_template(
@@ -1933,41 +1881,6 @@ register_template(
     stop_words=["<|im_end|>"],
     replace_eos=True,
     mm_plugin=get_mm_plugin(name="qwen2_vl", image_token="<|image_pad|>", video_token="<|video_pad|>"),
-)
-
-
-# copied from qwen template
-register_template(
-    name="qwen3_vl",
-    format_user=StringFormatter(slots=["<|im_start|>user\n{{content}}<|im_end|>\n<|im_start|>assistant\n"]),
-    format_assistant=StringFormatter(slots=["{{content}}<|im_end|>\n"]),
-    format_system=StringFormatter(slots=["<|im_start|>system\n{{content}}<|im_end|>\n"]),
-    format_function=FunctionFormatter(slots=["{{content}}<|im_end|>\n"], tool_format="qwen"),
-    format_observation=StringFormatter(
-        slots=["<|im_start|>user\n<tool_response>\n{{content}}\n</tool_response><|im_end|>\n<|im_start|>assistant\n"]
-    ),
-    format_tools=ToolFormatter(tool_format="qwen"),
-    stop_words=["<|im_end|>"],
-    replace_eos=True,
-    mm_plugin=get_mm_plugin(name="qwen3_vl", image_token="<|image_pad|>", video_token="<|video_pad|>"),
-    template_class=ReasoningTemplate,
-)
-
-
-# copied from qwen template
-register_template(
-    name="qwen3_vl_nothink",
-    format_user=StringFormatter(slots=["<|im_start|>user\n{{content}}<|im_end|>\n<|im_start|>assistant\n"]),
-    format_assistant=StringFormatter(slots=["{{content}}<|im_end|>\n"]),
-    format_system=StringFormatter(slots=["<|im_start|>system\n{{content}}<|im_end|>\n"]),
-    format_function=FunctionFormatter(slots=["{{content}}<|im_end|>\n"], tool_format="qwen"),
-    format_observation=StringFormatter(
-        slots=["<|im_start|>user\n<tool_response>\n{{content}}\n</tool_response><|im_end|>\n<|im_start|>assistant\n"]
-    ),
-    format_tools=ToolFormatter(tool_format="qwen"),
-    stop_words=["<|im_end|>"],
-    replace_eos=True,
-    mm_plugin=get_mm_plugin(name="qwen3_vl", image_token="<|image_pad|>", video_token="<|video_pad|>"),
 )
 
 

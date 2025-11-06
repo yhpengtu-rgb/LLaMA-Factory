@@ -32,7 +32,7 @@ from transformers.utils import is_torch_bf16_gpu_available, is_torch_npu_availab
 from ..extras import logging
 from ..extras.constants import CHECKPOINT_NAMES, EngineName
 from ..extras.misc import check_dependencies, check_version, get_current_device, is_env_enabled
-from ..extras.packages import is_mcore_adapter_available, is_transformers_version_greater_than
+from ..extras.packages import is_transformers_version_greater_than
 from .data_args import DataArguments
 from .evaluation_args import EvaluationArguments
 from .finetuning_args import FinetuningArguments
@@ -52,17 +52,6 @@ _INFER_ARGS = [ModelArguments, DataArguments, FinetuningArguments, GeneratingArg
 _INFER_CLS = tuple[ModelArguments, DataArguments, FinetuningArguments, GeneratingArguments]
 _EVAL_ARGS = [ModelArguments, DataArguments, EvaluationArguments, FinetuningArguments]
 _EVAL_CLS = tuple[ModelArguments, DataArguments, EvaluationArguments, FinetuningArguments]
-
-if is_mcore_adapter_available() and is_env_enabled("USE_MCA"):
-    from mcore_adapter import TrainingArguments as McaTrainingArguments
-
-    _TRAIN_MCA_ARGS = [ModelArguments, DataArguments, McaTrainingArguments, FinetuningArguments, GeneratingArguments]
-    _TRAIN_MCA_CLS = tuple[
-        ModelArguments, DataArguments, McaTrainingArguments, FinetuningArguments, GeneratingArguments
-    ]
-else:
-    _TRAIN_MCA_ARGS = []
-    _TRAIN_MCA_CLS = tuple()
 
 
 def read_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Union[dict[str, Any], list[str]]:
@@ -142,23 +131,12 @@ def _verify_model_args(
         logger.warning_rank0("We should use slow tokenizer for the Yi models. Change `use_fast_tokenizer` to False.")
         model_args.use_fast_tokenizer = False
 
-    # Validate advanced training features
-    if model_args.fp8 and model_args.quantization_bit is not None:
-        raise ValueError("FP8 training is not compatible with quantization. Please disable one of them.")
-
-    if model_args.fp8_enable_fsdp_float8_all_gather and not model_args.fp8:
-        logger.warning_rank0("fp8_enable_fsdp_float8_all_gather requires fp8=True. Setting fp8=True.")
-        model_args.fp8 = True
-
 
 def _check_extra_dependencies(
     model_args: "ModelArguments",
     finetuning_args: "FinetuningArguments",
     training_args: Optional["TrainingArguments"] = None,
 ) -> None:
-    if model_args.use_kt:
-        check_version("ktransformers", mandatory=True)
-
     if model_args.use_unsloth:
         check_version("unsloth", mandatory=True)
 
@@ -169,7 +147,7 @@ def _check_extra_dependencies(
         check_version("mixture-of-depth>=1.1.6", mandatory=True)
 
     if model_args.infer_backend == EngineName.VLLM:
-        check_version("vllm>=0.4.3,<=0.11.0")
+        check_version("vllm>=0.4.3,<=0.10.0")
         check_version("vllm", mandatory=True)
     elif model_args.infer_backend == EngineName.SGLANG:
         check_version("sglang>=0.4.5")
@@ -196,8 +174,7 @@ def _check_extra_dependencies(
     if training_args is not None:
         if training_args.deepspeed:
             # pin deepspeed version < 0.17 because of https://github.com/deepspeedai/DeepSpeed/issues/7347
-            check_version("deepspeed", mandatory=True)
-            check_version("deepspeed>=0.10.0,<=0.16.9")
+            check_version("deepspeed>=0.10.0,<=0.16.9", mandatory=True)
 
         if training_args.predict_with_generate:
             check_version("jieba", mandatory=True)
@@ -209,27 +186,6 @@ def _parse_train_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -
     parser = HfArgumentParser(_TRAIN_ARGS)
     allow_extra_keys = is_env_enabled("ALLOW_EXTRA_ARGS")
     return _parse_args(parser, args, allow_extra_keys=allow_extra_keys)
-
-
-def _parse_train_mca_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> _TRAIN_MCA_CLS:
-    parser = HfArgumentParser(_TRAIN_MCA_ARGS)
-    allow_extra_keys = is_env_enabled("ALLOW_EXTRA_ARGS")
-    model_args, data_args, training_args, finetuning_args, generating_args = _parse_args(
-        parser, args, allow_extra_keys=allow_extra_keys
-    )
-
-    _configure_mca_training_args(training_args, data_args, finetuning_args)
-
-    return model_args, data_args, training_args, finetuning_args, generating_args
-
-
-def _configure_mca_training_args(training_args, data_args, finetuning_args) -> None:
-    """Patch training args to avoid args checking errors and sync MCA settings."""
-    training_args.predict_with_generate = False
-    training_args.generation_max_length = data_args.cutoff_len
-    training_args.generation_num_beams = 1
-    training_args.use_mca = True
-    finetuning_args.use_mca = True
 
 
 def _parse_infer_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> _INFER_CLS:
@@ -251,11 +207,7 @@ def get_ray_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Ray
 
 
 def get_train_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> _TRAIN_CLS:
-    if is_env_enabled("USE_MCA"):
-        model_args, data_args, training_args, finetuning_args, generating_args = _parse_train_mca_args(args)
-    else:
-        model_args, data_args, training_args, finetuning_args, generating_args = _parse_train_args(args)
-        finetuning_args.use_mca = False
+    model_args, data_args, training_args, finetuning_args, generating_args = _parse_train_args(args)
 
     # Setup logging
     if training_args.should_log:
@@ -285,16 +237,13 @@ def get_train_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> _
         if model_args.shift_attn:
             raise ValueError("PPO training is incompatible with S^2-Attn.")
 
-        if finetuning_args.reward_model_type == "lora" and model_args.use_kt:
-            raise ValueError("KTransformers does not support lora reward model.")
-
         if finetuning_args.reward_model_type == "lora" and model_args.use_unsloth:
             raise ValueError("Unsloth does not support lora reward model.")
 
         if training_args.report_to and training_args.report_to[0] not in ["wandb", "tensorboard"]:
             raise ValueError("PPO only accepts wandb or tensorboard logger.")
 
-    if not model_args.use_kt and training_args.parallel_mode == ParallelMode.NOT_DISTRIBUTED:
+    if training_args.parallel_mode == ParallelMode.NOT_DISTRIBUTED:
         raise ValueError("Please launch distributed training with `llamafactory-cli` or `torchrun`.")
 
     if training_args.deepspeed and training_args.parallel_mode != ParallelMode.DISTRIBUTED:
@@ -355,9 +304,6 @@ def get_train_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> _
 
     if model_args.use_unsloth and is_deepspeed_zero3_enabled():
         raise ValueError("Unsloth is incompatible with DeepSpeed ZeRO-3.")
-
-    if model_args.use_kt and is_deepspeed_zero3_enabled():
-        raise ValueError("KTransformers is incompatible with DeepSpeed ZeRO-3.")
 
     if data_args.neat_packing and is_transformers_version_greater_than("4.53.0"):
         raise ValueError("Neat packing is incompatible with transformers>=4.53.0.")

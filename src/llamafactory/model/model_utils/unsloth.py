@@ -55,6 +55,7 @@ def load_unsloth_pretrained_model(
     from unsloth import FastLanguageModel  # type: ignore
 
     unsloth_kwargs = _get_unsloth_kwargs(config, model_args.model_name_or_path, model_args, finetuning_args)
+    print(unsloth_kwargs)
     try:
         model, _ = FastLanguageModel.from_pretrained(**unsloth_kwargs)
     except NotImplementedError:

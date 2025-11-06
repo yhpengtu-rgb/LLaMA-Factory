@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0,1,2,3 llamafactory-cli train examples/train_qlora/mistral_7b_lora_sft_otfq.yaml per_device_train_batch_size=8
